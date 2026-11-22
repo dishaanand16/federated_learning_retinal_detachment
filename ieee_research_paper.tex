@@ -1,0 +1,158 @@
+\documentclass[conference]{IEEEtran}
+
+\usepackage{cite}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{url}
+
+\title{Federated Transfer Learning for Retinal Detachment Classification Across Hospital Datasets}
+
+\author{
+\IEEEauthorblockN{[Author Name(s)]}
+\IEEEauthorblockA{[Department, Institution]\\
+[City, Country]\\
+[Email address(es)]}
+}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Retinal detachment (RD) is a sight-threatening condition for which automated image classification may support clinical workflows. This study implements a federated transfer-learning prototype that trains an image classifier on data partitions associated with three hospitals and evaluates the resulting global model on a fourth, held-out hospital dataset. The model uses a frozen ImageNet-pretrained EfficientNetB0 backbone augmented with a squeeze-and-excitation block and a binary classification head. Federated optimization is performed with FedAvg for five communication rounds using the Flower framework. The held-out site's dataset contains 400 images (300 RD and 100 non-RD), and evaluation uses a fixed 20\% validation split. The final held-out-site AUC, accuracy, sensitivity, specificity, and confidence intervals are \textbf{[INSERT VERIFIED FINAL METRICS]}. These results should be interpreted as validation performance, not independent test performance. The current implementation also uses an untrained initialization as its ``before federated learning'' baseline; therefore, that comparison is not a valid trained-model baseline and must be replaced before drawing conclusions about federated learning gains.
+\end{abstract}
+
+\begin{IEEEkeywords}
+federated learning, retinal detachment, medical image classification, transfer learning, EfficientNet, cross-hospital evaluation
+\end{IEEEkeywords}
+
+\section{Introduction}
+Retinal detachment is a serious ophthalmic condition in which timely identification is important. Deep-learning image classifiers can learn useful visual features, but training a model from multiple clinical institutions raises practical concerns: images may be distributed across organizations, data governance may restrict central pooling, and image distributions may differ between sites.
+
+Federated learning (FL) provides a training approach in which participating clients optimize a shared model using local data and send model updates rather than image files to an aggregation server. This does not, by itself, guarantee privacy or prevent information leakage from updates. It also does not remove the need for institution-level validation.
+
+This work describes an implementation of cross-hospital federated transfer learning for binary RD classification. The system uses three hospital partitions for federated training and reserves Aravid Eye Care as a held-out site for validation during training. The contributions are: (1) an implementation using Flower's FedAvg strategy and an EfficientNetB0-based classifier; (2) a site-held-out evaluation setup using the available hospital-organized image folders; and (3) a reproducible reporting checklist that distinguishes measured results from results that remain to be collected.
+
+\section{Related Work}
+McMahan \emph{et al.} introduced Federated Averaging (FedAvg), which combines locally computed model updates to train a shared model without transferring raw training examples to a central server \cite{mcmahan2017}. EfficientNet proposed a family of convolutional neural networks that scale model dimensions in a coordinated manner \cite{tan2019}. Squeeze-and-excitation networks introduced channel-wise feature recalibration, which motivates the attention block used in this implementation \cite{hu2018}. Flower provides a framework for implementing and evaluating federated learning systems \cite{beutel2020}.
+
+This project applies these methods to its available hospital-organized RD image folders. It does not establish clinical effectiveness, a privacy guarantee, or superiority over centralized or independently trained alternatives; those claims require additional experiments.
+
+\section{Methods}
+\subsection{Dataset and Site Partition}
+The project dataset is organized into four site directories, each containing \texttt{RD} and \texttt{Non-RD} folders. The following counts were obtained by counting image files with JPG, JPEG, PNG, BMP, TIF, or TIFF extensions in those folders.
+
+\begin{table}[htbp]
+\caption{Image counts in the project folders}
+\label{tab:counts}
+\centering
+\begin{tabular}{lrrr}
+\toprule
+\textbf{Site} & \textbf{Non-RD} & \textbf{RD} & \textbf{Total}\\
+\midrule
+LV Prasad & 98 & 217 & 315\\
+SMCH & 200 & 400 & 600\\
+Medanta & 278 & 100 & 378\\
+Aravid Eye Care (held out) & 100 & 300 & 400\\
+\midrule
+Total & 676 & 1017 & 1693\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The counts describe files present in the workspace; they do not verify image quality, patient uniqueness, label correctness, or eligibility. The code creates a seeded, image-level 80/20 training/validation split separately within each site. It does not implement patient-level grouping or a separate test partition. If multiple images can belong to one patient, a patient-level split is needed to prevent leakage.
+
+LV Prasad, SMCH, and Medanta are configured as the three federated clients. Aravid Eye Care is not a training client and is used by the server-side evaluation function to assess the global model after each round. Thus, Aravid is held out from client training, but its validation split is repeatedly consulted during the experiment and should not be described as an untouched test set.
+
+\subsection{Classifier}
+Images are resized to $224 \times 224$ pixels and batched in groups of 16. The classifier uses ImageNet-pretrained EfficientNetB0 with its convolutional base frozen. Its output features pass through a squeeze-and-excitation block with reduction factor 16, global average pooling, a 256-unit ReLU dense layer, dropout with rate 0.4, and a one-unit sigmoid output. The model is compiled with Adam (learning rate $10^{-4}$), binary cross-entropy, accuracy, and area under the ROC curve (AUC).
+
+\subsection{Federated Training}
+The server uses Flower's FedAvg strategy with all three clients participating in every round, for five rounds. Each client trains locally for five epochs per round and returns model weights and a value used by the strategy for aggregation. The data-loading pipeline batches the data before the client returns \texttt{len(train\_ds)}. Consequently, the reported aggregation weight is the number of batches, not the number of images. This may slightly distort sample weighting when client dataset sizes are not multiples of the batch size; the implementation should be corrected to return the number of training examples before the final experiment is reported.
+
+The simulation configures CPU resources and runs the clients through Flower simulation. This is not evidence that four independent hospitals were connected in a production deployment. The code does not transfer image files as part of the federated loop, but model updates can still disclose information; no differential privacy, secure aggregation, or formal privacy analysis is implemented.
+
+\subsection{Evaluation Protocol and Metrics}
+The server evaluates the global model on Aravid Eye Care's 20\% validation split before training and after each communication round. The current ``before FL'' evaluation uses an ImageNet-pretrained backbone with a newly initialized, untrained classification head. It is therefore an untrained-head reference, not a trained local-only, centralized, or non-federated baseline. Do not interpret its difference from the federated model as the causal benefit of FL.
+
+Report AUC and accuracy, and additionally compute sensitivity, specificity, precision, F1-score, and a confusion matrix on a clearly defined held-out test set. Include confidence intervals (preferably patient-level bootstrap intervals if patient identifiers are available), the classification threshold and how it was selected, and the number of independent patients. Use validation data for model selection and reserve a test set that is not repeatedly inspected. For a fair comparison, train a local-only baseline on Aravid's training split and/or a centralized baseline on the pooled training partitions, using the same preprocessing, model, and evaluation split.
+
+\section{Experimental Results}
+\subsection{Training and Evaluation Results}
+The workspace contains a plot of AUC and accuracy over five rounds, but the exact values are not preserved in a machine-readable result file. Transcribe exact values from the experiment logs or rerun the experiment after correcting aggregation weights and the baseline. Do not estimate final table entries from the plotted pixels.
+
+\begin{table}[htbp]
+\caption{Held-out Aravid validation results (replace all bracketed entries)}
+\label{tab:rounds}
+\centering
+\begin{tabular}{crrrr}
+\toprule
+\textbf{Round} & \textbf{Loss} & \textbf{Accuracy} & \textbf{AUC} & \textbf{[Metric]}\\
+\midrule
+Initial (untrained) & [\,] & [\,] & [\,] & [\,]\\
+1 & [\,] & [\,] & [\,] & [\,]\\
+2 & [\,] & [\,] & [\,] & [\,]\\
+3 & [\,] & [\,] & [\,] & [\,]\\
+4 & [\,] & [\,] & [\,] & [\,]\\
+5 & [\,] & [\,] & [\,] & [\,]\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[htbp]
+\caption{Comparison with trained baselines on the same independent test set}
+\label{tab:baselines}
+\centering
+\begin{tabular}{lrrrr}
+\toprule
+\textbf{Method} & \textbf{Accuracy} & \textbf{AUC} & \textbf{Sensitivity} & \textbf{Specificity}\\
+\midrule
+Local-only (Aravid) & [\,] & [\,] & [\,] & [\,]\\
+Centralized pooled training & [\,] & [\,] & [\,] & [\,]\\
+Federated (FedAvg) & [\,] & [\,] & [\,] & [\,]\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[htbp]
+\centering
+\fbox{\parbox[c][1.1in][c]{0.92\columnwidth}{\centering
+\textbf{INSERT FINAL RESULT FIGURE HERE}\\
+Plot per-round held-out validation metrics and baseline(s).\\
+Use exact logged results; label the split and metric.}}
+\caption{Global-model performance by communication round. Replace this placeholder with the final plot and identify the evaluation partition.}
+\label{fig:rounds}
+\end{figure}
+
+\subsection{Results Narrative}
+\textbf{[ADD 2--4 sentences after running the corrected experiment.]} State the final-round metrics with confidence intervals; compare FL with the trained baselines on the same test cases; describe whether performance improved or varied across rounds; and report sensitivity and specificity alongside AUC. Avoid claiming generalization to other hospitals based on the single held-out site's validation split.
+
+\section{Discussion}
+The project provides a prototype for coordinating model training across site-specific image folders while keeping those image files outside the federated training exchange. The site-level class proportions differ substantially: for example, RD comprises 100 of 378 Medanta images, whereas non-RD comprises 100 of 400 Aravid images. This heterogeneity and the small number of sites make site-wise results, class-sensitive metrics, uncertainty estimates, and carefully matched baselines important.
+
+The currently available evidence is insufficient to establish that federated training improves performance over a meaningful non-federated alternative. In particular, the initial evaluation is untrained, no separate test set is configured, and the aggregation weights count batches rather than examples. These issues should be addressed before interpreting differences as benefits of FL. AUC and accuracy alone are also inadequate for assessing a clinical classifier, especially when class prevalence varies by site.
+
+\subsection{Limitations}
+This study is limited to four folder-based image collections, a single held-out site, and a validation-only evaluation flow. Patient-level identifiers, acquisition protocols, label adjudication procedures, demographic metadata, and image quality criteria are not documented in the implementation. There is no external test set, repeated-seed evaluation, uncertainty analysis, calibration assessment, or privacy-enhancing mechanism. Simulation results should not be presented as a deployed multi-institution system. These gaps limit claims about clinical utility, fairness, generalizability, and privacy.
+
+\section{Conclusion}
+This paper describes a Flower-based FedAvg prototype for RD image classification using a frozen EfficientNetB0 feature extractor and a site-held-out validation workflow. The implementation and dataset counts are documented, while the final quantitative results are intentionally left for verified experiment outputs. Before submission, correct the aggregation sample counts, add an independent test evaluation and trained baselines, and populate the result placeholders with exact metrics and uncertainty estimates. No clinical or privacy guarantee is established by the current experiment.
+
+\section*{Acknowledgment}
+\textbf{[OPTIONAL: Add funding, institutional support, and other acknowledgments.]}
+
+\begin{thebibliography}{00}
+\bibitem{mcmahan2017}
+B. McMahan, E. Moore, D. Ramage, S. Hampson, and B. A. y Arcas, ``Communication-efficient learning of deep networks from decentralized data,'' in \emph{Proc. 20th International Conference on Artificial Intelligence and Statistics (AISTATS)}, 2017, pp. 1273--1282.
+
+\bibitem{tan2019}
+M. Tan and Q. V. Le, ``EfficientNet: Rethinking model scaling for convolutional neural networks,'' in \emph{Proc. 36th International Conference on Machine Learning (ICML)}, 2019, pp. 6105--6114.
+
+\bibitem{hu2018}
+J. Hu, L. Shen, and G. Sun, ``Squeeze-and-excitation networks,'' in \emph{Proc. IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)}, 2018, pp. 7132--7141.
+
+\bibitem{beutel2020}
+D. J. Beutel \emph{et al.}, ``Flower: A friendly federated learning research framework,'' \emph{arXiv preprint arXiv:2007.14390}, 2020.
+\end{thebibliography}
+
+\end{document}
